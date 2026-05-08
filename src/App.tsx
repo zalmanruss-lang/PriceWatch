@@ -1,616 +1,407 @@
-import { useState } from 'react';
+import { useState } from "react";
 
-const STORES = [
-  'Amazon MX',
-  'Amazon USA',
-  'Mercado Libre',
-  'Liverpool',
-  'Walmart MX',
-  'Walmart USA',
-];
-
-const PLANS = {
-  free: { name: 'Free', price: 'Gratis', items: 2, color: '#888780' },
-  pro: { name: 'Pro', price: '$249 MXN/año', items: 30, color: '#1D9E75' },
-  biz: {
-    name: 'Business',
-    price: '$999 MXN/año',
-    items: 200,
-    color: '#185FA5',
-  },
+const C = {
+  bg:      "#0a0f1e",
+  surface: "#111827",
+  card:    "#151e2d",
+  border:  "#1f2937",
+  green:   "#00ff88",
+  greenDim:"#0d2b1a",
+  gold:    "#f5c518",
+  goldDim: "#2a2000",
+  red:     "#ff4d6a",
+  redDim:  "#2b0d14",
+  text:    "#ffffff",
+  muted:   "#9ca3af",
+  dim:     "#4a5568",
 };
 
-const sampleItems = [
-  {
-    id: 1,
-    name: 'Apple AirPods Pro (2da gen)',
-    store: 'Amazon MX',
-    current: 4199,
-    prev: 4599,
-    currency: 'MXN',
-    history: [4599, 4599, 4499, 4350, 4199],
-    alert: true,
-  },
-  {
-    id: 2,
-    name: 'Sony WH-1000XM5',
-    store: 'Mercado Libre',
-    current: 7999,
-    prev: 7999,
-    currency: 'MXN',
-    history: [8499, 8299, 8099, 7999, 7999],
-    alert: false,
-  },
+const STORES = ["Amazon MX","Amazon USA","Mercado Libre","Liverpool","Walmart MX","Walmart USA"];
+const PLANS = {
+  free: { name:"Free",     price:"Gratis",       items:2,   color: C.muted },
+  pro:  { name:"Pro",      price:"$249 MXN/año", items:30,  color: C.green },
+  biz:  { name:"Business", price:"$999 MXN/año", items:200, color: C.gold  },
+};
+
+const SAMPLE = [
+  { id:1, name:"Apple AirPods Pro (2da gen)", store:"Amazon MX",    current:4199, prev:4599, min:3899, currency:"MXN", history:[4599,4499,4350,4250,4199], alert:true  },
+  { id:2, name:"Sony WH-1000XM5",             store:"Mercado Libre", current:7999, prev:7999, min:7499, currency:"MXN", history:[8499,8299,8099,7999,7999], alert:false },
 ];
 
-function Sparkline({ data, color }: { data: number[]; color: string }) {
-  const max = Math.max(...data),
-    min = Math.min(...data);
-  const range = max - min || 1;
-  const w = 80,
-    h = 32,
-    pad = 4;
-  const pts = data
-    .map((v, i) => {
-      const x = pad + (i / (data.length - 1)) * (w - pad * 2);
-      const y = pad + (1 - (v - min) / range) * (h - pad * 2);
-      return `${x},${y}`;
-    })
-    .join(' ');
-  const last = pts.split(' ').pop()!.split(',');
+// ── Logo ──────────────────────────────────────────────────────────────────────
+function Logo({ size=32 }) {
   return (
-    <svg width={w} height={h}>
-      <polyline
-        points={pts}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <circle cx={last[0]} cy={last[1]} r="3" fill={color} />
+    <svg viewBox="0 0 80 80" width={size} height={size} style={{flexShrink:0}}>
+      <defs>
+        <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor={C.green}/>
+          <stop offset="100%" stopColor="#00cc6a"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="80" height="80" rx="20" fill={C.surface}/>
+      <text x="10" y="62" fontFamily="Georgia,serif" fontSize="56" fontWeight="bold" fill="url(#lg)">D</text>
+      <polyline points="46,26 56,34 66,24" fill="none" stroke={C.gold}    strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/>
+      <polyline points="46,36 56,44 66,34" fill="none" stroke={C.green}   strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.5"/>
     </svg>
   );
 }
 
-function PriceBadge({
-  current,
-  prev,
-  currency,
-}: {
-  current: number;
-  prev: number;
-  currency: string;
-}) {
-  const pct = (((current - prev) / prev) * 100).toFixed(1);
+// ── Sparkline ─────────────────────────────────────────────────────────────────
+function Spark({ data, up }) {
+  const max = Math.max(...data), min = Math.min(...data), r = max-min||1;
+  const w=72, h=28, p=3;
+  const pts = data.map((v,i)=>{
+    const x = p+(i/(data.length-1))*(w-p*2);
+    const y = p+(1-(v-min)/r)*(h-p*2);
+    return `${x},${y}`;
+  }).join(" ");
+  const last = pts.split(" ").pop().split(",");
+  const col = up ? C.red : C.green;
+  return (
+    <svg width={w} height={h}>
+      <polyline points={pts} fill="none" stroke={col} strokeWidth="1.5" strokeLinejoin="round"/>
+      <circle cx={last[0]} cy={last[1]} r="3" fill={col}/>
+    </svg>
+  );
+}
+
+// ── Badge ────────────────────────────────────────────────────────────────────
+function Badge({ current, prev, currency }) {
+  const pct  = ((current-prev)/prev*100).toFixed(1);
   const down = current < prev;
   const same = current === prev;
-  const bg = same ? '#f0f0f0' : down ? '#EAF3DE' : '#FCEBEB';
-  const clr = same ? '#888' : down ? '#3B6D11' : '#A32D2D';
-  const sym = currency === 'MXN' ? '$' : 'US$';
+  const sym  = currency==="MXN" ? "$" : "US$";
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-      <span style={{ fontSize: 18, fontWeight: 500 }}>
-        {sym}
-        {current.toLocaleString()}
-      </span>
+    <div style={{display:"flex", alignItems:"baseline", gap:8}}>
+      <span style={{fontSize:22, fontWeight:700, letterSpacing:-0.5}}>{sym}{current.toLocaleString()}</span>
       {!same && (
-        <span
-          style={{
-            fontSize: 12,
-            padding: '2px 7px',
-            borderRadius: 99,
-            background: bg,
-            color: clr,
-          }}
-        >
-          {down ? '▼' : '▲'} {Math.abs(Number(pct))}%
+        <span style={{fontSize:12, padding:"2px 8px", borderRadius:99,
+          background: down ? C.greenDim : C.redDim,
+          color:      down ? C.green    : C.red,
+          border:`1px solid ${down?C.green+"33":C.red+"33"}`}}>
+          {down?"▼":"▲"} {Math.abs(Number(pct))}%
         </span>
       )}
     </div>
   );
 }
 
+// ── Toggle ───────────────────────────────────────────────────────────────────
+function Toggle({ on, onChange }) {
+  return (
+    <div onClick={onChange} style={{
+      width:32, height:18, borderRadius:99, cursor:"pointer",
+      background: on ? C.green : C.border,
+      position:"relative", transition:"background .2s", flexShrink:0,
+    }}>
+      <div style={{
+        position:"absolute", top:3, left: on?15:3,
+        width:12, height:12, borderRadius:"50%",
+        background: on ? C.bg : C.muted,
+        transition:"left .2s",
+      }}/>
+    </div>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab] = useState('dashboard');
-  const [plan] = useState<'free' | 'pro' | 'biz'>('free');
-  const [items, setItems] = useState(sampleItems);
-  const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState({ url: '', store: STORES[0] });
-  const [alerts, setAlerts] = useState<Record<number, boolean>>({
-    1: true,
-    2: false,
-  });
+  const [tab,      setTab]      = useState("dashboard");
+  const [plan]                  = useState("free");
+  const [items,    setItems]    = useState(SAMPLE);
+  const [alerts,   setAlerts]   = useState({1:true, 2:false});
+  const [addOpen,  setAddOpen]  = useState(false);
+  const [form,     setForm]     = useState({url:"", store:STORES[0]});
+  const [expanded, setExpanded] = useState(null);
 
-  const maxItems = PLANS[plan].items;
+  const max = PLANS[plan].items;
 
-  function toggleAlert(id: number) {
-    setAlerts((a) => ({ ...a, [id]: !a[id] }));
-  }
-  function removeItem(id: number) {
-    setItems((i) => i.filter((x) => x.id !== id));
-  }
   function addItem() {
     if (!form.url) return;
-    setItems((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        name: 'Nuevo artículo (sin precio aún)',
-        store: form.store,
-        current: 0,
-        prev: 0,
-        currency: 'MXN',
-        history: [0],
-        alert: true,
-      },
-    ]);
-    setForm({ url: '', store: STORES[0] });
+    setItems(p=>[...p,{id:Date.now(), name:"Artículo nuevo", store:form.store,
+      current:0, prev:0, min:0, currency:"MXN", history:[0], alert:true}]);
+    setAlerts(a=>({...a,[Date.now()]:true}));
+    setForm({url:"", store:STORES[0]});
     setAddOpen(false);
   }
 
-  const tabs = ['dashboard', 'historial', 'planes'];
+  const NAV = [
+    {id:"dashboard", icon:"⊞", label:"Artículos"},
+    {id:"history",   icon:"↗", label:"Historial"},
+    {id:"plans",     icon:"✦", label:"Planes"},
+  ];
+
+  const s = {
+    root: { background:C.bg, minHeight:"100vh", fontFamily:"'Inter',system-ui,sans-serif",
+            color:C.text, maxWidth:600, margin:"0 auto", paddingBottom:80 },
+    // top bar
+    topbar: { display:"flex", alignItems:"center", justifyContent:"space-between",
+              padding:"1.25rem 1.25rem 0" },
+    wordmark: { fontSize:20, fontWeight:700, letterSpacing:-0.5 },
+    pill: { fontSize:11, padding:"3px 10px", borderRadius:99, border:`1px solid ${C.border}`,
+            background:C.surface, color:C.muted },
+    // nav
+    nav: { position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)",
+           width:"100%", maxWidth:600, background:C.surface,
+           borderTop:`1px solid ${C.border}`, display:"flex", zIndex:99 },
+    navBtn: (active) => ({
+      flex:1, background:"none", border:"none", cursor:"pointer",
+      padding:"12px 0 10px", display:"flex", flexDirection:"column",
+      alignItems:"center", gap:4,
+      color: active ? C.green : C.dim,
+    }),
+    navIcon: (active) => ({ fontSize:18, lineHeight:1 }),
+    navLabel: (active) => ({ fontSize:10, fontWeight: active?600:400, letterSpacing:0.3 }),
+    // section title
+    sectionTitle: { fontSize:11, letterSpacing:3, color:C.dim, textTransform:"uppercase",
+                    padding:"1.25rem 1.25rem 0.75rem" },
+    // card
+    card: { background:C.card, border:`1px solid ${C.border}`, borderRadius:16,
+            margin:"0 1rem 10px", padding:"1rem 1.25rem" },
+    // button primary
+    btnPrimary: { fontSize:13, padding:"8px 16px", borderRadius:10, cursor:"pointer",
+                  background:C.green, color:C.bg, border:"none", fontWeight:700 },
+    btnSecondary: { fontSize:13, padding:"8px 14px", borderRadius:10, cursor:"pointer",
+                    background:"none", color:C.muted, border:`1px solid ${C.border}` },
+    btnGhost: { background:"none", border:"none", cursor:"pointer",
+                color:C.dim, fontSize:16, padding:"0 0 0 10px" },
+  };
 
   return (
-    <div
-      style={{
-        fontFamily: 'system-ui, sans-serif',
-        maxWidth: 680,
-        margin: '0 auto',
-        padding: '1.5rem 1rem',
-        color: '#1a1a1a',
-      }}
-    >
-      <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 500 }}>
-        PriceWatch MX
-      </h2>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <span
-          style={{
-            fontSize: 12,
-            padding: '3px 10px',
-            borderRadius: 99,
-            background: '#f0f0f0',
-            color: '#555',
-            border: '0.5px solid #ddd',
-          }}
-        >
-          Plan {PLANS[plan].name} — {items.length}/{maxItems} artículos
+    <div style={s.root}>
+
+      {/* Top bar */}
+      <div style={s.topbar}>
+        <div style={{display:"flex", alignItems:"center", gap:10}}>
+          <Logo size={36}/>
+          <span style={s.wordmark}>Dropp<span style={{color:C.green}}>d</span></span>
+        </div>
+        <span style={s.pill}>
+          {PLANS[plan].name} · {items.length}/{max}
         </span>
       </div>
 
-      <div
-        style={{
-          display: 'flex',
-          gap: 4,
-          borderBottom: '1px solid #eee',
-          marginBottom: '1.5rem',
-        }}
-      >
-        {tabs.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '6px 14px',
-              fontSize: 14,
-              textTransform: 'capitalize',
-              color: tab === t ? '#1a1a1a' : '#888',
-              borderBottom:
-                tab === t ? '2px solid #1a1a1a' : '2px solid transparent',
-              fontWeight: tab === t ? 500 : 400,
-              marginBottom: -1,
-            }}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'dashboard' && (
+      {/* ── Dashboard ── */}
+      {tab==="dashboard" && (
         <div>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 12,
-            }}
-          >
-            <span style={{ fontSize: 14, color: '#888' }}>
-              {items.length} artículo{items.length !== 1 ? 's' : ''} rastreado
-              {items.length !== 1 ? 's' : ''}
-            </span>
-            {items.length < maxItems ? (
-              <button
-                onClick={() => setAddOpen((o) => !o)}
-                style={{
-                  fontSize: 13,
-                  padding: '6px 14px',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                  background: '#1a1a1a',
-                  color: '#fff',
-                  border: 'none',
-                  fontWeight: 500,
-                }}
-              >
-                + Agregar
-              </button>
-            ) : (
-              <button
-                onClick={() => setTab('planes')}
-                style={{
-                  fontSize: 13,
-                  padding: '6px 14px',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                  background: '#E1F5EE',
-                  color: '#0F6E56',
-                  border: '0.5px solid #9FE1CB',
-                  fontWeight: 500,
-                }}
-              >
-                Mejorar plan ↗
-              </button>
-            )}
+          <div style={{...s.sectionTitle, display:"flex", justifyContent:"space-between", alignItems:"center", paddingRight:"1.25rem"}}>
+            <span>{items.length} artículo{items.length!==1?"s":""} rastreado{items.length!==1?"s":""}</span>
+            {items.length < max
+              ? <button style={s.btnPrimary} onClick={()=>setAddOpen(o=>!o)}>+ Agregar</button>
+              : <button style={{...s.btnPrimary, background:C.gold, color:C.bg}}
+                  onClick={()=>setTab("plans")}>Mejorar plan ↗</button>
+            }
           </div>
 
+          {/* Add form */}
           {addOpen && (
-            <div
-              style={{
-                background: '#f9f9f9',
-                borderRadius: 12,
-                border: '0.5px solid #eee',
-                padding: '1rem',
-                marginBottom: 16,
-              }}
-            >
-              <p style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 500 }}>
-                Agregar artículo
+            <div style={{...s.card, border:`1px solid ${C.green}33`}}>
+              <p style={{margin:"0 0 10px", fontSize:14, fontWeight:600, color:C.green}}>
+                Nuevo artículo
               </p>
-              <input
-                placeholder="Pega la URL del producto..."
-                value={form.url}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, url: e.target.value }))
-                }
-                style={{
-                  width: '100%',
-                  marginBottom: 8,
-                  padding: '8px 10px',
-                  borderRadius: 8,
-                  border: '1px solid #ddd',
-                  fontSize: 14,
-                  boxSizing: 'border-box',
-                }}
-              />
-              <select
-                value={form.store}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, store: e.target.value }))
-                }
-                style={{
-                  width: '100%',
-                  marginBottom: 10,
-                  padding: '8px 10px',
-                  borderRadius: 8,
-                  border: '1px solid #ddd',
-                  fontSize: 14,
-                }}
-              >
-                {STORES.map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
+              <input placeholder="Pega la URL del producto..." value={form.url}
+                onChange={e=>setForm(f=>({...f,url:e.target.value}))}
+                style={{width:"100%", marginBottom:8, padding:"9px 12px", borderRadius:10,
+                  border:`1px solid ${C.border}`, background:C.surface, color:C.text,
+                  fontSize:13, boxSizing:"border-box", outline:"none"}}/>
+              <select value={form.store} onChange={e=>setForm(f=>({...f,store:e.target.value}))}
+                style={{width:"100%", marginBottom:12, padding:"9px 12px", borderRadius:10,
+                  border:`1px solid ${C.border}`, background:C.surface, color:C.text, fontSize:13}}>
+                {STORES.map(s=><option key={s}>{s}</option>)}
               </select>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  onClick={addItem}
-                  style={{
-                    flex: 1,
-                    padding: '8px 0',
-                    borderRadius: 8,
-                    cursor: 'pointer',
-                    background: '#1a1a1a',
-                    color: '#fff',
-                    border: 'none',
-                    fontSize: 13,
-                    fontWeight: 500,
-                  }}
-                >
-                  Rastrear
-                </button>
-                <button
-                  onClick={() => setAddOpen(false)}
-                  style={{
-                    padding: '8px 14px',
-                    borderRadius: 8,
-                    cursor: 'pointer',
-                    border: '1px solid #ddd',
-                    background: 'none',
-                    color: '#888',
-                    fontSize: 13,
-                  }}
-                >
-                  Cancelar
-                </button>
+              <div style={{display:"flex", gap:8}}>
+                <button style={s.btnPrimary} onClick={addItem}>Rastrear</button>
+                <button style={s.btnSecondary} onClick={()=>setAddOpen(false)}>Cancelar</button>
               </div>
             </div>
           )}
 
-          {items.map((item) => (
-            <div
-              key={item.id}
-              style={{
-                background: '#fff',
-                border: '0.5px solid #eee',
-                borderRadius: 12,
-                padding: '1rem 1.25rem',
-                marginBottom: 10,
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'flex-start',
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p
-                    style={{
-                      margin: '0 0 2px',
-                      fontWeight: 500,
-                      fontSize: 15,
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
+          {/* Items */}
+          {items.map(item=>(
+            <div key={item.id} style={s.card}>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10}}>
+                <div style={{flex:1, minWidth:0}}>
+                  <p style={{margin:"0 0 3px", fontWeight:600, fontSize:15,
+                    whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
                     {item.name}
                   </p>
-                  <p style={{ margin: 0, fontSize: 12, color: '#888' }}>
+                  <span style={{fontSize:11, color:C.dim, background:C.surface,
+                    padding:"2px 8px", borderRadius:99, border:`1px solid ${C.border}`}}>
                     {item.store}
+                  </span>
+                </div>
+                <button style={s.btnGhost} onClick={()=>setItems(i=>i.filter(x=>x.id!==item.id))}>✕</button>
+              </div>
+
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:10}}>
+                <Badge current={item.current} prev={item.prev} currency={item.currency}/>
+                <Spark data={item.history} up={item.current>item.prev}/>
+              </div>
+
+              {/* Min price */}
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+                background:C.goldDim, borderRadius:10, padding:"6px 12px", marginBottom:10,
+                border:`1px solid ${C.gold}22`}}>
+                <span style={{fontSize:11, color:C.dim}}>Mínimo histórico</span>
+                <span style={{fontSize:13, fontWeight:700, color:C.gold}}>
+                  ${item.min.toLocaleString()} {item.currency}
+                </span>
+              </div>
+
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+                borderTop:`1px solid ${C.border}`, paddingTop:10}}>
+                <div style={{display:"flex", alignItems:"center", gap:8}}>
+                  <Toggle on={alerts[item.id]} onChange={()=>setAlerts(a=>({...a,[item.id]:!a[item.id]}))}/>
+                  <span style={{fontSize:12, color: alerts[item.id]?C.green:C.dim}}>
+                    {alerts[item.id]?"Alerta activa":"Sin alerta"}
+                  </span>
+                </div>
+                <div style={{display:"flex", gap:6}}>
+                  <button style={{...s.btnSecondary, fontSize:11, padding:"4px 10px"}}
+                    onClick={()=>setExpanded(expanded===item.id?null:item.id)}>
+                    Historial
+                  </button>
+                  <button style={{...s.btnPrimary, fontSize:11, padding:"4px 10px", background:C.green}}>
+                    Compartir
+                  </button>
+                </div>
+              </div>
+
+              {/* Inline history */}
+              {expanded===item.id && (
+                <div style={{marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex", gap:4, alignItems:"flex-end", height:60}}>
+                    {item.history.map((price,i)=>{
+                      const isMin = price===Math.min(...item.history);
+                      const h = Math.round(16+(price/Math.max(...item.history))*40);
+                      return (
+                        <div key={i} style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4}}>
+                          <div style={{width:"100%", height:h, borderRadius:4,
+                            background: isMin?C.green:C.border}}/>
+                          <span style={{fontSize:9, color:C.dim}}>${price.toLocaleString()}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p style={{margin:"8px 0 0", fontSize:10, color:C.dim}}>
+                    Verde = precio más bajo registrado
                   </p>
                 </div>
-                <button
-                  onClick={() => removeItem(item.id)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: '#ccc',
-                    fontSize: 16,
-                    paddingLeft: 12,
-                  }}
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  margin: '10px 0',
-                  flexWrap: 'wrap',
-                  gap: 8,
-                }}
-              >
-                <PriceBadge
-                  current={item.current}
-                  prev={item.prev}
-                  currency={item.currency}
-                />
-                <Sparkline
-                  data={item.history}
-                  color={item.current < item.prev ? '#3B6D11' : '#aaa'}
-                />
-              </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  borderTop: '0.5px solid #eee',
-                  paddingTop: 10,
-                }}
-              >
-                <span style={{ fontSize: 12, color: '#888' }}>
-                  Precio anterior: ${item.prev.toLocaleString()} {item.currency}
-                </span>
-                <label
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    cursor: 'pointer',
-                    fontSize: 12,
-                    color: alerts[item.id] ? '#0F6E56' : '#aaa',
-                  }}
-                >
-                  <span
-                    onClick={() => toggleAlert(item.id)}
-                    style={{
-                      width: 28,
-                      height: 16,
-                      borderRadius: 99,
-                      position: 'relative',
-                      background: alerts[item.id] ? '#1D9E75' : '#ddd',
-                      display: 'inline-block',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: 2,
-                        left: alerts[item.id] ? 14 : 2,
-                        width: 12,
-                        height: 12,
-                        borderRadius: '50%',
-                        background: '#fff',
-                        transition: 'left .2s',
-                      }}
-                    />
-                  </span>
-                  Alerta
-                </label>
-              </div>
+              )}
             </div>
           ))}
+
+          {items.length===0 && (
+            <div style={{textAlign:"center", padding:"4rem 0", color:C.dim, fontSize:14}}>
+              <div style={{fontSize:32, marginBottom:12}}>📦</div>
+              Agrega tu primer artículo para empezar a rastrear.
+            </div>
+          )}
         </div>
       )}
 
-      {tab === 'historial' && (
+      {/* ── History ── */}
+      {tab==="history" && (
         <div>
-          {items.map((item) => (
-            <div
-              key={item.id}
-              style={{
-                background: '#fff',
-                border: '0.5px solid #eee',
-                borderRadius: 12,
-                padding: '1rem 1.25rem',
-                marginBottom: 10,
-              }}
-            >
-              <p style={{ margin: '0 0 4px', fontWeight: 500, fontSize: 14 }}>
-                {item.name}
-              </p>
-              <p style={{ margin: '0 0 12px', fontSize: 12, color: '#888' }}>
-                {item.store}
-              </p>
-              <div style={{ display: 'flex', gap: 4 }}>
-                {item.history.map((price, i) => {
-                  const isLow = price === Math.min(...item.history);
+          <div style={s.sectionTitle}>Historial de precios</div>
+          {items.map(item=>(
+            <div key={item.id} style={s.card}>
+              <p style={{margin:"0 0 4px", fontWeight:600, fontSize:14}}>{item.name}</p>
+              <p style={{margin:"0 0 14px", fontSize:11, color:C.dim}}>{item.store}</p>
+              <div style={{display:"flex", gap:4, alignItems:"flex-end", height:70}}>
+                {item.history.map((price,i)=>{
+                  const isMin = price===Math.min(...item.history);
+                  const h = Math.round(16+(price/Math.max(...item.history))*50);
                   return (
-                    <div key={i} style={{ flex: 1, textAlign: 'center' }}>
-                      <div
-                        style={{
-                          height: `${Math.round(
-                            20 + (price / Math.max(...item.history)) * 50
-                          )}px`,
-                          background: isLow ? '#1D9E75' : '#e5e5e5',
-                          borderRadius: 4,
-                          margin: '0 2px',
-                        }}
-                      />
-                      <p
-                        style={{
-                          margin: '4px 0 0',
-                          fontSize: 11,
-                          color: '#888',
-                        }}
-                      >
-                        ${price.toLocaleString()}
-                      </p>
+                    <div key={i} style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4}}>
+                      <div style={{width:"100%", height:h, borderRadius:5,
+                        background: isMin?C.green:C.border, transition:"height .3s"}}/>
+                      <span style={{fontSize:9, color:C.dim}}>${price.toLocaleString()}</span>
                     </div>
                   );
                 })}
               </div>
-              <p style={{ margin: '8px 0 0', fontSize: 11, color: '#bbb' }}>
-                Verde = precio más bajo registrado
-              </p>
+              <p style={{margin:"8px 0 0", fontSize:10, color:C.dim}}>Verde = precio más bajo</p>
+            </div>
+          ))}
+          {items.length===0 && (
+            <div style={{textAlign:"center", padding:"4rem 0", color:C.dim, fontSize:14}}>
+              Sin historial aún.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Plans ── */}
+      {tab==="plans" && (
+        <div>
+          <div style={s.sectionTitle}>Elige tu plan</div>
+          {Object.entries(PLANS).map(([key,p])=>(
+            <div key={key} style={{
+              ...s.card,
+              border:`1px solid ${key===plan ? p.color+"66" : C.border}`,
+              position:"relative",
+            }}>
+              {key==="pro" && (
+                <div style={{
+                  position:"absolute", top:-1, left:"50%",
+                  transform:"translateX(-50%) translateY(-50%)",
+                  background:C.greenDim, color:C.green, fontSize:10,
+                  padding:"3px 12px", borderRadius:99,
+                  border:`1px solid ${C.green}44`, whiteSpace:"nowrap",
+                }}>⭐ Más popular</div>
+              )}
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12}}>
+                <div>
+                  <div style={{fontSize:16, fontWeight:700, marginBottom:2}}>{p.name}</div>
+                  <div style={{fontSize:20, fontWeight:700, color:p.color}}>{p.price}</div>
+                </div>
+                {key===plan && (
+                  <span style={{fontSize:11, padding:"3px 10px", borderRadius:99,
+                    background:C.surface, color:C.muted, border:`1px solid ${C.border}`}}>
+                    Plan actual
+                  </span>
+                )}
+              </div>
+              <div style={{display:"flex", flexDirection:"column", gap:6, marginBottom:14}}>
+                {[
+                  `${p.items===200?"200+":p.items} artículos rastreados`,
+                  "Alertas de precio personalizadas",
+                  "Historial de precios",
+                  ...(key!=="free" ? ["Múltiples tiendas", "Compartir artículos"] : []),
+                  ...(key==="biz"  ? ["Exportar datos CSV", "API access"] : []),
+                ].map((f,i)=>(
+                  <div key={i} style={{display:"flex", alignItems:"center", gap:8, fontSize:13, color:C.muted}}>
+                    <span style={{color:p.color, fontSize:12}}>✓</span> {f}
+                  </div>
+                ))}
+              </div>
+              <button style={{
+                width:"100%", padding:"10px 0", borderRadius:10, cursor:"pointer",
+                fontSize:13, fontWeight:700,
+                background: key===plan ? C.surface : p.color,
+                color:      key===plan ? C.dim     : C.bg,
+                border:     key===plan ? `1px solid ${C.border}` : "none",
+              }}>
+                {key===plan ? "Plan actual" : `Elegir ${p.name}`}
+              </button>
             </div>
           ))}
         </div>
       )}
 
-      {tab === 'planes' && (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-            gap: 12,
-          }}
-        >
-          {(Object.entries(PLANS) as [string, typeof PLANS.free][]).map(
-            ([key, p]) => (
-              <div
-                key={key}
-                style={{
-                  background: '#fff',
-                  border:
-                    key === 'pro' ? '2px solid #378ADD' : '0.5px solid #eee',
-                  borderRadius: 12,
-                  padding: '1.25rem 1rem',
-                  position: 'relative',
-                }}
-              >
-                {key === 'pro' && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: -1,
-                      left: '50%',
-                      transform: 'translateX(-50%) translateY(-50%)',
-                      background: '#E6F1FB',
-                      color: '#185FA5',
-                      fontSize: 11,
-                      padding: '3px 10px',
-                      borderRadius: 99,
-                      border: '0.5px solid #B5D4F4',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    Más popular
-                  </div>
-                )}
-                <p style={{ margin: '0 0 4px', fontWeight: 500, fontSize: 16 }}>
-                  {p.name}
-                </p>
-                <p
-                  style={{
-                    margin: '0 0 12px',
-                    fontSize: 18,
-                    fontWeight: 500,
-                    color: p.color,
-                  }}
-                >
-                  {p.price}
-                </p>
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: '#666',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                  }}
-                >
-                  <span>✓ {p.items === 200 ? '200+' : p.items} artículos</span>
-                  <span>✓ Alertas de precio</span>
-                  <span>✓ Historial de precios</span>
-                  {key !== 'free' && <span>✓ Múltiples tiendas</span>}
-                  {key === 'biz' && <span>✓ Exportar datos</span>}
-                  {key === 'biz' && <span>✓ API access</span>}
-                </div>
-                <button
-                  style={{
-                    marginTop: 16,
-                    width: '100%',
-                    padding: '8px 0',
-                    borderRadius: 8,
-                    cursor: 'pointer',
-                    background: key === plan ? '#f0f0f0' : '#1a1a1a',
-                    color: key === plan ? '#888' : '#fff',
-                    border: 'none',
-                    fontSize: 13,
-                    fontWeight: 500,
-                  }}
-                >
-                  {key === plan ? 'Plan actual' : 'Elegir plan'}
-                </button>
-              </div>
-            )
-          )}
-        </div>
-      )}
+      {/* Bottom nav */}
+      <nav style={s.nav}>
+        {NAV.map(n=>(
+          <button key={n.id} style={s.navBtn(tab===n.id)} onClick={()=>setTab(n.id)}>
+            <span style={s.navIcon(tab===n.id)}>{n.icon}</span>
+            <span style={s.navLabel(tab===n.id)}>{n.label}</span>
+            {tab===n.id && (
+              <div style={{width:16, height:2, borderRadius:99, background:C.green, marginTop:2}}/>
+            )}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
