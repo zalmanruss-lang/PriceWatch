@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
 
-// ── Supabase client (inline, no install needed) ───────────────────────────────
-const SUPA_URL = "https://wlsgnjccjaevgchujeeg.supabase.co";
-const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsc2duamNjamFldmdjaHVqZWVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3ODI0MDksImV4cCI6MjA5NDM1ODQwOX0.jPI6SU8Si7NKTq3A5dh1TrUDULpOui357DSCkqrZg0Y";
+const SUPA_URL  = "https://wlsgnjccjaevgchujeeg.supabase.co";
+const SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsc2duamNjamFldmdjaHVqZWVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3ODI0MDksImV4cCI6MjA5NDM1ODQwOX0.jPI6SU8Si7NKTq3A5dh1TrUDULpOui357DSCkqrZg0Y";
+const FUNC_URL  = "https://wlsgnjccjaevgchujeeg.supabase.co/functions/v1/bright-function";
 
 async function supaFetch(path: string, options: RequestInit = {}) {
   const res = await fetch(`${SUPA_URL}/rest/v1${path}`, {
@@ -21,7 +21,6 @@ async function supaFetch(path: string, options: RequestInit = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-// ── Colors ───────────────────────────────────────────────────────────────────
 const C = {
   bg:      "#0a0f1e",
   surface: "#111827",
@@ -59,7 +58,6 @@ interface Item {
   alert_on_drop: boolean;
 }
 
-// ── Components ────────────────────────────────────────────────────────────────
 function Logo({ size=32 }: { size?: number }) {
   return (
     <svg viewBox="0 0 80 80" width={size} height={size} style={{flexShrink:0}}>
@@ -80,14 +78,14 @@ function Logo({ size=32 }: { size?: number }) {
 function Badge({ current, prev, currency }: { current: number; prev: number; currency: string }) {
   const pct  = prev > 0 ? ((current-prev)/prev*100).toFixed(1) : "0";
   const down = current < prev;
-  const same = current === prev;
+  const same = current === prev || prev === 0;
   const sym  = currency==="MXN" ? "$" : "US$";
   return (
     <div style={{display:"flex", alignItems:"baseline", gap:8}}>
       <span style={{fontSize:22, fontWeight:700, letterSpacing:-0.5}}>
-        {sym}{current.toLocaleString()}
+        {current > 0 ? `${sym}${current.toLocaleString()}` : "Obteniendo precio..."}
       </span>
-      {!same && prev > 0 && (
+      {!same && (
         <span style={{fontSize:12, padding:"2px 8px", borderRadius:99,
           background: down ? C.greenDim : C.redDim,
           color:      down ? C.green    : C.red,
@@ -116,20 +114,18 @@ function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   );
 }
 
-// ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab,     setTab]     = useState("dashboard");
-  const [plan]                = useState<PlanKey>("free");
-  const [items,   setItems]   = useState<Item[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [addOpen, setAddOpen] = useState(false);
-  const [saving,  setSaving]  = useState(false);
-  const [form,    setForm]    = useState({ url:"", store:STORES[0], name:"" });
-  const [error,   setError]   = useState("");
+  const [tab,      setTab]      = useState("dashboard");
+  const [plan]                  = useState<PlanKey>("free");
+  const [items,    setItems]    = useState<Item[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [addOpen,  setAddOpen]  = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [fetching, setFetching] = useState<number|null>(null);
+  const [form,     setForm]     = useState({ url:"", store:STORES[0], name:"" });
+  const [error,    setError]    = useState("");
 
   const max = PLANS[plan].items;
-
-  // Demo user ID (fijo hasta que agreguemos auth)
   const DEMO_USER = "00000000-0000-0000-0000-000000000001";
 
   useEffect(() => { loadItems(); }, []);
@@ -137,12 +133,34 @@ export default function App() {
   async function loadItems() {
     setLoading(true);
     try {
-      const data = await supaFetch(`/items?user_id=eq.${DEMO_USER}&order=created_at.desc`);
+      const data = await supaFetch(`/items?order=created_at.desc`);
       setItems(data || []);
     } catch {
       setError("No se pudieron cargar los artículos.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchPrice(itemId: number, url: string, store: string) {
+    setFetching(itemId);
+    setError("");
+    try {
+      const res = await fetch(FUNC_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SUPA_KEY}` },
+        body: JSON.stringify({ item_id: itemId, url, store }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await loadItems();
+      } else {
+        setError(`No se pudo obtener el precio: ${data.error}`);
+      }
+    } catch {
+      setError("Error al conectar con el servidor.");
+    } finally {
+      setFetching(null);
     }
   }
 
@@ -165,9 +183,12 @@ export default function App() {
           alert_on_drop: true,
         }),
       });
-      setItems(prev => [data[0], ...prev]);
+      const newItem = data[0];
+      setItems(prev => [newItem, ...prev]);
       setForm({ url:"", store:STORES[0], name:"" });
       setAddOpen(false);
+      // Obtener precio automáticamente al agregar
+      await fetchPrice(newItem.id, newItem.url, newItem.store);
     } catch {
       setError("Error al guardar el artículo.");
     } finally {
@@ -217,7 +238,6 @@ export default function App() {
     <div style={{background:C.bg, minHeight:"100vh", fontFamily:"'Inter',system-ui,sans-serif",
       color:C.text, maxWidth:600, margin:"0 auto", paddingBottom:80}}>
 
-      {/* Top bar */}
       <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"1.25rem 1.25rem 0"}}>
         <div style={{display:"flex", alignItems:"center", gap:10}}>
           <Logo size={36}/>
@@ -238,7 +258,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Dashboard */}
       {tab==="dashboard" && (
         <div>
           <div style={{...sectionTitle, display:"flex", justifyContent:"space-between",
@@ -300,7 +319,14 @@ export default function App() {
               </div>
 
               <div style={{marginBottom:10}}>
-                <Badge current={item.current_price} prev={item.prev_price} currency={item.currency}/>
+                {fetching===item.id ? (
+                  <div style={{display:"flex", alignItems:"center", gap:8, color:C.green, fontSize:14}}>
+                    <span style={{animation:"spin 1s linear infinite", display:"inline-block"}}>⟳</span>
+                    Obteniendo precio real...
+                  </div>
+                ) : (
+                  <Badge current={item.current_price} prev={item.prev_price} currency={item.currency}/>
+                )}
               </div>
 
               {item.min_price > 0 && (
@@ -320,18 +346,25 @@ export default function App() {
                     {item.alert_on_drop?"Alerta activa":"Sin alerta"}
                   </span>
                 </div>
-                <a href={item.url} target="_blank" rel="noopener noreferrer"
-                  style={{fontSize:11, padding:"4px 10px", borderRadius:8,
-                    border:`1px solid ${C.border}`, color:C.muted, textDecoration:"none"}}>
-                  Ver producto ↗
-                </a>
+                <div style={{display:"flex", gap:6}}>
+                  <button
+                    onClick={()=>fetchPrice(item.id, item.url, item.store)}
+                    disabled={fetching===item.id}
+                    style={{...btnSecondary, fontSize:11, padding:"4px 10px"}}>
+                    {fetching===item.id ? "..." : "↻ Precio"}
+                  </button>
+                  <a href={item.url} target="_blank" rel="noopener noreferrer"
+                    style={{fontSize:11, padding:"4px 10px", borderRadius:8,
+                      border:`1px solid ${C.border}`, color:C.muted, textDecoration:"none"}}>
+                    Ver ↗
+                  </a>
+                </div>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Plans */}
       {tab==="plans" && (
         <div>
           <div style={sectionTitle}>Elige tu plan</div>
@@ -381,7 +414,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Bottom nav */}
       <nav style={{position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)",
         width:"100%", maxWidth:600, background:C.surface,
         borderTop:`1px solid ${C.border}`, display:"flex", zIndex:99}}>
