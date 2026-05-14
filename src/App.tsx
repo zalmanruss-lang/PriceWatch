@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
 
-const SUPA_URL  = "https://wlsgnjccjaevgchujeeg.supabase.co";
-const SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsc2duamNjamFldmdjaHVqZWVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3ODI0MDksImV4cCI6MjA5NDM1ODQwOX0.jPI6SU8Si7NKTq3A5dh1TrUDULpOui357DSCkqrZg0Y";
-const FUNC_URL  = "https://wlsgnjccjaevgchujeeg.supabase.co/functions/v1/bright-function";
+const SUPA_URL    = "https://wlsgnjccjaevgchujeeg.supabase.co";
+const SUPA_KEY    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsc2duamNjamFldmdjaHVqZWVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3ODI0MDksImV4cCI6MjA5NDM1ODQwOX0.jPI6SU8Si7NKTq3A5dh1TrUDULpOui357DSCkqrZg0Y";
+const APIFY_TOKEN = "apify_api_8JMusSGbh8cFwRV24o2odK4m6RVNkh0xjsGO";
+const ACTOR_ID    = "laisidata~amazon-product-data-scraper";
 
 async function supaFetch(path: string, options: RequestInit = {}) {
   const res = await fetch(`${SUPA_URL}/rest/v1${path}`, {
@@ -83,7 +84,7 @@ function Badge({ current, prev, currency }: { current: number; prev: number; cur
   return (
     <div style={{display:"flex", alignItems:"baseline", gap:8}}>
       <span style={{fontSize:22, fontWeight:700, letterSpacing:-0.5}}>
-        {current > 0 ? `${sym}${current.toLocaleString()}` : "Obteniendo precio..."}
+        {current > 0 ? `${sym}${current.toLocaleString()}` : "Pendiente..."}
       </span>
       {!same && (
         <span style={{fontSize:12, padding:"2px 8px", borderRadius:99,
@@ -126,7 +127,6 @@ export default function App() {
   const [error,    setError]    = useState("");
 
   const max = PLANS[plan].items;
-  const DEMO_USER = "00000000-0000-0000-0000-000000000001";
 
   useEffect(() => { loadItems(); }, []);
 
@@ -142,23 +142,65 @@ export default function App() {
     }
   }
 
-  async function fetchPrice(itemId: number, url: string, store: string) {
+  async function fetchPrice(itemId: number, url: string) {
     setFetching(itemId);
     setError("");
     try {
-      const res = await fetch(FUNC_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SUPA_KEY}` },
-        body: JSON.stringify({ item_id: itemId, url, store }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        await loadItems();
-      } else {
-        setError(`No se pudo obtener el precio: ${data.error}`);
+      // 1. Disparar el actor en Apify
+      const runRes = await fetch(
+        `https://api.apify.com/v2/acts/${ACTOR_ID}/runs?token=${APIFY_TOKEN}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ urls: [{ url }], maxItems: 1 }),
+        }
+      );
+      const runData = await runRes.json();
+      const runId = runData?.data?.id;
+      if (!runId) throw new Error("No se pudo iniciar Apify");
+
+      // 2. Esperar resultado (polling cada 5s, máx 90s)
+      let price: number | null = null;
+      for (let i = 0; i < 18; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const statusRes  = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_TOKEN}`);
+        const statusData = await statusRes.json();
+        const status     = statusData?.data?.status;
+
+        if (status === "SUCCEEDED") {
+          const datasetId = statusData?.data?.defaultDatasetId;
+          const itemsRes  = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}`);
+          const products  = await itemsRes.json();
+          const product   = products?.[0];
+          const rawPrice  = product?.price ?? product?.currentPrice ?? product?.salePrice ?? null;
+          price = typeof rawPrice === "number"
+            ? rawPrice
+            : parseFloat(String(rawPrice ?? "").replace(/[^0-9.]/g, "")) || null;
+          break;
+        }
+        if (status === "FAILED" || status === "ABORTED") break;
       }
-    } catch {
-      setError("Error al conectar con el servidor.");
+
+      if (!price) throw new Error("No se pudo obtener el precio. Intenta con otra URL.");
+
+      // 3. Guardar en Supabase
+      const itemData = await supaFetch(`/items?id=eq.${itemId}`);
+      const current  = itemData?.[0]?.current_price ?? 0;
+      const minPrice = itemData?.[0]?.min_price ?? 0;
+      const newMin   = minPrice === 0 ? price : Math.min(minPrice, price);
+
+      await supaFetch(`/items?id=eq.${itemId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ prev_price: current, current_price: price, min_price: newMin }),
+      });
+      await supaFetch("/price_history", {
+        method: "POST",
+        body: JSON.stringify({ item_id: itemId, price }),
+      });
+
+      await loadItems();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error desconocido");
     } finally {
       setFetching(null);
     }
@@ -172,7 +214,6 @@ export default function App() {
       const data = await supaFetch("/items", {
         method: "POST",
         body: JSON.stringify({
-          user_id: DEMO_USER,
           name: form.name,
           url: form.url,
           store: form.store,
@@ -187,8 +228,8 @@ export default function App() {
       setItems(prev => [newItem, ...prev]);
       setForm({ url:"", store:STORES[0], name:"" });
       setAddOpen(false);
-      // Obtener precio automáticamente al agregar
-      await fetchPrice(newItem.id, newItem.url, newItem.store);
+      // Obtener precio automáticamente
+      await fetchPrice(newItem.id, newItem.url);
     } catch {
       setError("Error al guardar el artículo.");
     } finally {
@@ -320,10 +361,7 @@ export default function App() {
 
               <div style={{marginBottom:10}}>
                 {fetching===item.id ? (
-                  <div style={{display:"flex", alignItems:"center", gap:8, color:C.green, fontSize:14}}>
-                    <span style={{animation:"spin 1s linear infinite", display:"inline-block"}}>⟳</span>
-                    Obteniendo precio real...
-                  </div>
+                  <div style={{color:C.green, fontSize:14}}>⟳ Obteniendo precio real... (hasta 60 seg)</div>
                 ) : (
                   <Badge current={item.current_price} prev={item.prev_price} currency={item.currency}/>
                 )}
@@ -347,11 +385,10 @@ export default function App() {
                   </span>
                 </div>
                 <div style={{display:"flex", gap:6}}>
-                  <button
-                    onClick={()=>fetchPrice(item.id, item.url, item.store)}
+                  <button onClick={()=>fetchPrice(item.id, item.url)}
                     disabled={fetching===item.id}
                     style={{...btnSecondary, fontSize:11, padding:"4px 10px"}}>
-                    {fetching===item.id ? "..." : "↻ Precio"}
+                    {fetching===item.id ? "..." : "↻ Actualizar"}
                   </button>
                   <a href={item.url} target="_blank" rel="noopener noreferrer"
                     style={{fontSize:11, padding:"4px 10px", borderRadius:8,
