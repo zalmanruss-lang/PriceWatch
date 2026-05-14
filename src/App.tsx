@@ -47,10 +47,10 @@ function Logo({ size=32 }) {
 }
 
 // ── Sparkline ─────────────────────────────────────────────────────────────────
-function Spark({ data, up }) {
+function Spark({ data, up }: { data: number[]; up: boolean }) {
   const max = Math.max(...data), min = Math.min(...data), r = max-min||1;
   const w=72, h=28, p=3;
-  const pts = data.map((v,i)=>{
+  const pts = data.map((v: number, i: number)=>{
     const x = p+(i/(data.length-1))*(w-p*2);
     const y = p+(1-(v-min)/r)*(h-p*2);
     return `${x},${y}`;
@@ -66,7 +66,7 @@ function Spark({ data, up }) {
 }
 
 // ── Badge ────────────────────────────────────────────────────────────────────
-function Badge({ current, prev, currency }) {
+function Badge({ current, prev, currency }: { current: number; prev: number; currency: string }) {
   const pct  = ((current-prev)/prev*100).toFixed(1);
   const down = current < prev;
   const same = current === prev;
@@ -87,7 +87,7 @@ function Badge({ current, prev, currency }) {
 }
 
 // ── Toggle ───────────────────────────────────────────────────────────────────
-function Toggle({ on, onChange }) {
+function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   return (
     <div onClick={onChange} style={{
       width:32, height:18, borderRadius:99, cursor:"pointer",
