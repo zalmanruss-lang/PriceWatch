@@ -1,6 +1,27 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
 
+// ── Supabase client (inline, no install needed) ───────────────────────────────
+const SUPA_URL = "https://wlsgnjccjaevgchujeeg.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsc2duamNjamFldmdjaHVqZWVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3ODI0MDksImV4cCI6MjA5NDM1ODQwOX0.jPI6SU8Si7NKTq3A5dh1TrUDULpOui357DSCkqrZg0Y";
+
+async function supaFetch(path: string, options: RequestInit = {}) {
+  const res = await fetch(`${SUPA_URL}/rest/v1${path}`, {
+    ...options,
+    headers: {
+      "apikey": SUPA_KEY,
+      "Authorization": `Bearer ${SUPA_KEY}`,
+      "Content-Type": "application/json",
+      "Prefer": "return=representation",
+      ...(options.headers || {}),
+    },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+// ── Colors ───────────────────────────────────────────────────────────────────
 const C = {
   bg:      "#0a0f1e",
   surface: "#111827",
@@ -29,20 +50,16 @@ const PLANS: Record<PlanKey, { name: string; price: string; items: number; color
 interface Item {
   id: number;
   name: string;
+  url: string;
   store: string;
-  current: number;
-  prev: number;
-  min: number;
+  current_price: number;
+  prev_price: number;
+  min_price: number;
   currency: string;
-  history: number[];
-  alert: boolean;
+  alert_on_drop: boolean;
 }
 
-const SAMPLE: Item[] = [
-  { id:1, name:"Apple AirPods Pro (2da gen)", store:"Amazon MX",    current:4199, prev:4599, min:3899, currency:"MXN", history:[4599,4499,4350,4250,4199], alert:true  },
-  { id:2, name:"Sony WH-1000XM5",             store:"Mercado Libre", current:7999, prev:7999, min:7499, currency:"MXN", history:[8499,8299,8099,7999,7999], alert:false },
-];
-
+// ── Components ────────────────────────────────────────────────────────────────
 function Logo({ size=32 }: { size?: number }) {
   return (
     <svg viewBox="0 0 80 80" width={size} height={size} style={{flexShrink:0}}>
@@ -60,34 +77,17 @@ function Logo({ size=32 }: { size?: number }) {
   );
 }
 
-function Spark({ data, up }: { data: number[]; up: boolean }) {
-  const max = Math.max(...data), min = Math.min(...data), r = max-min||1;
-  const w=72, h=28, p=3;
-  const pts = data.map((v: number, i: number) => {
-    const x = p+(i/(data.length-1))*(w-p*2);
-    const y = p+(1-(v-min)/r)*(h-p*2);
-    return `${x},${y}`;
-  }).join(" ");
-  const lastPt = pts.split(" ").pop() ?? "0,0";
-  const [lx, ly] = lastPt.split(",");
-  const col = up ? C.red : C.green;
-  return (
-    <svg width={w} height={h}>
-      <polyline points={pts} fill="none" stroke={col} strokeWidth="1.5" strokeLinejoin="round"/>
-      <circle cx={lx} cy={ly} r="3" fill={col}/>
-    </svg>
-  );
-}
-
 function Badge({ current, prev, currency }: { current: number; prev: number; currency: string }) {
-  const pct  = ((current-prev)/prev*100).toFixed(1);
+  const pct  = prev > 0 ? ((current-prev)/prev*100).toFixed(1) : "0";
   const down = current < prev;
   const same = current === prev;
   const sym  = currency==="MXN" ? "$" : "US$";
   return (
     <div style={{display:"flex", alignItems:"baseline", gap:8}}>
-      <span style={{fontSize:22, fontWeight:700, letterSpacing:-0.5}}>{sym}{current.toLocaleString()}</span>
-      {!same && (
+      <span style={{fontSize:22, fontWeight:700, letterSpacing:-0.5}}>
+        {sym}{current.toLocaleString()}
+      </span>
+      {!same && prev > 0 && (
         <span style={{fontSize:12, padding:"2px 8px", borderRadius:99,
           background: down ? C.greenDim : C.redDim,
           color:      down ? C.green    : C.red,
@@ -116,32 +116,85 @@ function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   );
 }
 
+// ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab,      setTab]      = useState("dashboard");
-  const [plan]                  = useState<PlanKey>("free");
-  const [items,    setItems]    = useState<Item[]>(SAMPLE);
-  const [alerts,   setAlerts]   = useState<Record<number, boolean>>({1:true, 2:false});
-  const [addOpen,  setAddOpen]  = useState(false);
-  const [form,     setForm]     = useState({url:"", store:STORES[0]});
-  const [expanded, setExpanded] = useState<number|null>(null);
+  const [tab,     setTab]     = useState("dashboard");
+  const [plan]                = useState<PlanKey>("free");
+  const [items,   setItems]   = useState<Item[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [addOpen, setAddOpen] = useState(false);
+  const [saving,  setSaving]  = useState(false);
+  const [form,    setForm]    = useState({ url:"", store:STORES[0], name:"" });
+  const [error,   setError]   = useState("");
 
   const max = PLANS[plan].items;
 
-  function addItem() {
-    if (!form.url) return;
-    const newId = Date.now();
-    setItems(p=>[...p,{id:newId, name:"Artículo nuevo", store:form.store,
-      current:0, prev:0, min:0, currency:"MXN", history:[0], alert:true}]);
-    setAlerts(a=>({...a,[newId]:true}));
-    setForm({url:"", store:STORES[0]});
-    setAddOpen(false);
+  // Demo user ID (fijo hasta que agreguemos auth)
+  const DEMO_USER = "00000000-0000-0000-0000-000000000001";
+
+  useEffect(() => { loadItems(); }, []);
+
+  async function loadItems() {
+    setLoading(true);
+    try {
+      const data = await supaFetch(`/items?user_id=eq.${DEMO_USER}&order=created_at.desc`);
+      setItems(data || []);
+    } catch {
+      setError("No se pudieron cargar los artículos.");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  const NAV = [
-    {id:"dashboard", icon:"⊞", label:"Artículos"},
-    {id:"history",   icon:"↗", label:"Historial"},
-    {id:"plans",     icon:"✦", label:"Planes"},
-  ];
+  async function addItem() {
+    if (!form.url || !form.name) return;
+    setSaving(true);
+    setError("");
+    try {
+      const data = await supaFetch("/items", {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: DEMO_USER,
+          name: form.name,
+          url: form.url,
+          store: form.store,
+          current_price: 0,
+          prev_price: 0,
+          min_price: 0,
+          currency: "MXN",
+          alert_on_drop: true,
+        }),
+      });
+      setItems(prev => [data[0], ...prev]);
+      setForm({ url:"", store:STORES[0], name:"" });
+      setAddOpen(false);
+    } catch {
+      setError("Error al guardar el artículo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeItem(id: number) {
+    try {
+      await supaFetch(`/items?id=eq.${id}`, { method: "DELETE" });
+      setItems(prev => prev.filter(x => x.id !== id));
+    } catch {
+      setError("Error al eliminar.");
+    }
+  }
+
+  async function toggleAlert(item: Item) {
+    try {
+      await supaFetch(`/items?id=eq.${item.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ alert_on_drop: !item.alert_on_drop }),
+      });
+      setItems(prev => prev.map(x => x.id===item.id ? {...x, alert_on_drop:!x.alert_on_drop} : x));
+    } catch {
+      setError("Error al actualizar alerta.");
+    }
+  }
 
   const card: CSSProperties = {
     background:C.card, border:`1px solid ${C.border}`, borderRadius:16,
@@ -178,6 +231,13 @@ export default function App() {
         </span>
       </div>
 
+      {error && (
+        <div style={{margin:"1rem", padding:"10px 14px", borderRadius:10,
+          background:C.redDim, border:`1px solid ${C.red}44`, color:C.red, fontSize:13}}>
+          {error}
+        </div>
+      )}
+
       {/* Dashboard */}
       {tab==="dashboard" && (
         <div>
@@ -193,6 +253,11 @@ export default function App() {
           {addOpen && (
             <div style={{...card, border:`1px solid ${C.green}33`}}>
               <p style={{margin:"0 0 10px", fontSize:14, fontWeight:600, color:C.green}}>Nuevo artículo</p>
+              <input placeholder="Nombre del artículo..." value={form.name}
+                onChange={e=>setForm(f=>({...f,name:e.target.value}))}
+                style={{width:"100%", marginBottom:8, padding:"9px 12px", borderRadius:10,
+                  border:`1px solid ${C.border}`, background:C.surface, color:C.text,
+                  fontSize:13, boxSizing:"border-box", outline:"none"}}/>
               <input placeholder="Pega la URL del producto..." value={form.url}
                 onChange={e=>setForm(f=>({...f,url:e.target.value}))}
                 style={{width:"100%", marginBottom:8, padding:"9px 12px", borderRadius:10,
@@ -204,13 +269,24 @@ export default function App() {
                 {STORES.map(s=><option key={s}>{s}</option>)}
               </select>
               <div style={{display:"flex", gap:8}}>
-                <button style={btnPrimary} onClick={addItem}>Rastrear</button>
+                <button style={btnPrimary} onClick={addItem} disabled={saving}>
+                  {saving ? "Guardando..." : "Rastrear"}
+                </button>
                 <button style={btnSecondary} onClick={()=>setAddOpen(false)}>Cancelar</button>
               </div>
             </div>
           )}
 
-          {items.map(item=>(
+          {loading ? (
+            <div style={{textAlign:"center", padding:"4rem 0", color:C.dim, fontSize:14}}>
+              Cargando artículos...
+            </div>
+          ) : items.length===0 ? (
+            <div style={{textAlign:"center", padding:"4rem 0", color:C.dim, fontSize:14}}>
+              <div style={{fontSize:32, marginBottom:12}}>📦</div>
+              Agrega tu primer artículo para empezar a rastrear.
+            </div>
+          ) : items.map(item=>(
             <div key={item.id} style={card}>
               <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10}}>
                 <div style={{flex:1, minWidth:0}}>
@@ -219,95 +295,39 @@ export default function App() {
                   <span style={{fontSize:11, color:C.dim, background:C.surface,
                     padding:"2px 8px", borderRadius:99, border:`1px solid ${C.border}`}}>{item.store}</span>
                 </div>
-                <button onClick={()=>setItems(i=>i.filter(x=>x.id!==item.id))}
+                <button onClick={()=>removeItem(item.id)}
                   style={{background:"none", border:"none", cursor:"pointer", color:C.dim, fontSize:16, paddingLeft:10}}>✕</button>
               </div>
 
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
-                flexWrap:"wrap", gap:8, marginBottom:10}}>
-                <Badge current={item.current} prev={item.prev} currency={item.currency}/>
-                <Spark data={item.history} up={item.current>item.prev}/>
+              <div style={{marginBottom:10}}>
+                <Badge current={item.current_price} prev={item.prev_price} currency={item.currency}/>
               </div>
 
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
-                background:C.goldDim, borderRadius:10, padding:"6px 12px", marginBottom:10,
-                border:`1px solid ${C.gold}22`}}>
-                <span style={{fontSize:11, color:C.dim}}>Mínimo histórico</span>
-                <span style={{fontSize:13, fontWeight:700, color:C.gold}}>${item.min.toLocaleString()} {item.currency}</span>
-              </div>
+              {item.min_price > 0 && (
+                <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+                  background:C.goldDim, borderRadius:10, padding:"6px 12px", marginBottom:10,
+                  border:`1px solid ${C.gold}22`}}>
+                  <span style={{fontSize:11, color:C.dim}}>Mínimo histórico</span>
+                  <span style={{fontSize:13, fontWeight:700, color:C.gold}}>${item.min_price.toLocaleString()} {item.currency}</span>
+                </div>
+              )}
 
               <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
                 borderTop:`1px solid ${C.border}`, paddingTop:10}}>
                 <div style={{display:"flex", alignItems:"center", gap:8}}>
-                  <Toggle on={!!alerts[item.id]} onChange={()=>setAlerts(a=>({...a,[item.id]:!a[item.id]}))}/>
-                  <span style={{fontSize:12, color: alerts[item.id]?C.green:C.dim}}>
-                    {alerts[item.id]?"Alerta activa":"Sin alerta"}
+                  <Toggle on={item.alert_on_drop} onChange={()=>toggleAlert(item)}/>
+                  <span style={{fontSize:12, color: item.alert_on_drop?C.green:C.dim}}>
+                    {item.alert_on_drop?"Alerta activa":"Sin alerta"}
                   </span>
                 </div>
-                <div style={{display:"flex", gap:6}}>
-                  <button style={{...btnSecondary, fontSize:11, padding:"4px 10px"}}
-                    onClick={()=>setExpanded(expanded===item.id ? null : item.id)}>
-                    Historial
-                  </button>
-                  <button style={{...btnPrimary, fontSize:11, padding:"4px 10px"}}>Compartir</button>
-                </div>
+                <a href={item.url} target="_blank" rel="noopener noreferrer"
+                  style={{fontSize:11, padding:"4px 10px", borderRadius:8,
+                    border:`1px solid ${C.border}`, color:C.muted, textDecoration:"none"}}>
+                  Ver producto ↗
+                </a>
               </div>
-
-              {expanded===item.id && (
-                <div style={{marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}`}}>
-                  <div style={{display:"flex", gap:4, alignItems:"flex-end", height:60}}>
-                    {item.history.map((price,i)=>{
-                      const isMin = price===Math.min(...item.history);
-                      const h = Math.round(16+(price/Math.max(...item.history))*40);
-                      return (
-                        <div key={i} style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4}}>
-                          <div style={{width:"100%", height:h, borderRadius:4, background:isMin?C.green:C.border}}/>
-                          <span style={{fontSize:9, color:C.dim}}>${price.toLocaleString()}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <p style={{margin:"8px 0 0", fontSize:10, color:C.dim}}>Verde = precio más bajo registrado</p>
-                </div>
-              )}
             </div>
           ))}
-
-          {items.length===0 && (
-            <div style={{textAlign:"center", padding:"4rem 0", color:C.dim, fontSize:14}}>
-              <div style={{fontSize:32, marginBottom:12}}>📦</div>
-              Agrega tu primer artículo para empezar a rastrear.
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* History */}
-      {tab==="history" && (
-        <div>
-          <div style={sectionTitle}>Historial de precios</div>
-          {items.map(item=>(
-            <div key={item.id} style={card}>
-              <p style={{margin:"0 0 4px", fontWeight:600, fontSize:14}}>{item.name}</p>
-              <p style={{margin:"0 0 14px", fontSize:11, color:C.dim}}>{item.store}</p>
-              <div style={{display:"flex", gap:4, alignItems:"flex-end", height:70}}>
-                {item.history.map((price,i)=>{
-                  const isMin = price===Math.min(...item.history);
-                  const h = Math.round(16+(price/Math.max(...item.history))*50);
-                  return (
-                    <div key={i} style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4}}>
-                      <div style={{width:"100%", height:h, borderRadius:5, background:isMin?C.green:C.border}}/>
-                      <span style={{fontSize:9, color:C.dim}}>${price.toLocaleString()}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <p style={{margin:"8px 0 0", fontSize:10, color:C.dim}}>Verde = precio más bajo</p>
-            </div>
-          ))}
-          {items.length===0 && (
-            <div style={{textAlign:"center", padding:"4rem 0", color:C.dim, fontSize:14}}>Sin historial aún.</div>
-          )}
         </div>
       )}
 
@@ -365,7 +385,10 @@ export default function App() {
       <nav style={{position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)",
         width:"100%", maxWidth:600, background:C.surface,
         borderTop:`1px solid ${C.border}`, display:"flex", zIndex:99}}>
-        {NAV.map(n=>(
+        {[
+          {id:"dashboard", icon:"⊞", label:"Artículos"},
+          {id:"plans",     icon:"✦", label:"Planes"},
+        ].map(n=>(
           <button key={n.id} onClick={()=>setTab(n.id)} style={{
             flex:1, background:"none", border:"none", cursor:"pointer",
             padding:"12px 0 10px", display:"flex", flexDirection:"column" as const,
