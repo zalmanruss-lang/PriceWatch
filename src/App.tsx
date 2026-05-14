@@ -4,7 +4,7 @@ import type { CSSProperties } from "react";
 const SUPA_URL    = "https://wlsgnjccjaevgchujeeg.supabase.co";
 const SUPA_KEY    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsc2duamNjamFldmdjaHVqZWVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3ODI0MDksImV4cCI6MjA5NDM1ODQwOX0.jPI6SU8Si7NKTq3A5dh1TrUDULpOui357DSCkqrZg0Y";
 const APIFY_TOKEN = "apify_api_8JMusSGbh8cFwRV24o2odK4m6RVNkh0xjsGO";
-const ACTOR_ID    = "junglee~Amazon-crawler";
+const ACTOR_ID    = "junglee/Amazon-crawler";
 
 async function supaFetch(path: string, options: RequestInit = {}) {
   const res = await fetch(`${SUPA_URL}/rest/v1${path}`, {
